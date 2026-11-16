@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Katalog Toko Tani Makmur</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#edf1e6; --surface:#ffffff; --ink:#1c2a1f; --muted:#5a6a5e; --line:#cdd5c4;
+    --green:#2b7a3d; --amber:#a86a0a; --red:#a63d2a; --track:#e2e8da;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+  main{max-width:880px;margin:0 auto;padding:40px 20px 64px}
+  h1{font-size:clamp(2rem,6vw,3.25rem);line-height:1.05;font-weight:800;letter-spacing:-.02em;margin:0 0 8px}
+  .sub{margin:0 0 28px;color:var(--muted);max-width:52ch}
+  .filters{display:grid;gap:12px;grid-template-columns:1fr 200px;margin-bottom:12px}
+  input[type=search],select{width:100%;font:inherit;padding:13px 14px;border:2px solid var(--ink);border-radius:6px;background:var(--surface);color:var(--ink)}
+  input[type=search]{font-size:1.15rem}
+  :focus-visible{outline:3px solid var(--green);outline-offset:2px}
+  fieldset{grid-column:1/-1;border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  legend{float:left;margin-right:8px;color:var(--muted);padding:0}
+  .seg label{display:inline-block;padding:7px 16px;border:2px solid var(--ink);border-radius:999px;cursor:pointer;background:var(--surface)}
+  .seg input{position:absolute;opacity:0}
+  .seg input:checked+span{font-weight:600}
+  .seg label:has(input:checked){background:var(--ink);color:#fff}
+  .seg label:has(input:focus-visible){outline:3px solid var(--green);outline-offset:2px}
+  #status{margin:20px 0 8px;color:var(--muted)}
+  ul{list-style:none;margin:0;padding:0;border-top:2px solid var(--ink)}
+  li{display:grid;grid-template-columns:1fr 130px 170px;gap:8px 20px;align-items:center;padding:14px 4px;border-bottom:1px solid var(--line)}
+  .name{font-weight:600;font-size:1.05rem}
+  .cat{color:var(--muted);font-size:.9rem}
+  .price{font-variant-numeric:tabular-nums;text-align:right}
+  .price small{display:block;color:var(--muted)}
+  .meter{height:8px;background:var(--track);border-radius:4px;overflow:hidden}
+  .meter span{display:block;height:100%;background:var(--green)}
+  .label{font-size:.9rem;margin-top:4px}
+  .low .meter span{background:var(--amber)} .low .label{color:var(--amber)}
+  .out .label{color:var(--red);font-weight:600}
+  .empty{padding:28px 4px}
+  .empty button{font:inherit;margin-top:8px;padding:8px 16px;border:2px solid var(--ink);border-radius:6px;background:var(--surface);cursor:pointer}
+  @media (max-width:640px){
+    .filters{grid-template-columns:1fr}
+    li{grid-template-columns:1fr auto}
+    .stock{grid-column:1/-1}
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Katalog Toko Tani Makmur</h1>
+  <p class="sub">Cari pupuk, benih, pestisida, dan alat pertanian. Hasil langsung menyesuaikan saat Anda mengetik.</p>
+
+  <form id="filters" class="filters" role="search" onsubmit="return false">
+    <input id="q" type="search" placeholder="Cari nama produk, misalnya urea" aria-label="Nama produk" autocomplete="off">
+    <select id="category" aria-label="Kategori"><option value="">Semua kategori</option></select>
+    <fieldset class="seg">
+      <legend>Stok</legend>
+      <label><input type="radio" name="stock" value="all" checked><span>Semua</span></label>
+      <label><input type="radio" name="stock" value="available"><span>Tersedia</span></label>
+      <label><input type="radio" name="stock" value="empty"><span>Habis</span></label>
+    </fieldset>
+  </form>
+
+  <p id="status" aria-live="polite"></p>
+  <ul id="list"></ul>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
+  const LOW = 10, FULL = 60;
+  let timer, controller;
+
+  const stockValue = () => document.querySelector('input[name="stock"]:checked').value;
+
+  async function search() {
+    controller?.abort();
+    controller = new AbortController();
+    const params = new URLSearchParams({ q: $("q").value, category: $("category").value, stock: stockValue() });
+    try {
+      const res = await fetch("/api/products?" + params, { signal: controller.signal });
+      if (!res.ok) throw new Error(res.status);
+      render(await res.json());
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      $("list").replaceChildren();
+      $("status").textContent = "Data tidak dapat dimuat. Pastikan server berjalan di port 8080, lalu ketik ulang pencarian.";
+    }
+  }
+
+  function row(p) {
+    const level = p.stock === 0 ? "out" : p.stock <= LOW ? "low" : "";
+    const li = document.createElement("li");
+    if (level) li.className = level;
+
+    const info = document.createElement("div");
+    info.innerHTML = '<div class="name"></div><div class="cat"></div>';
+    info.children[0].textContent = p.name;
+    info.children[1].textContent = p.category;
+
+    const price = document.createElement("div");
+    price.className = "price";
+    price.innerHTML = "<span></span><small></small>";
+    price.children[0].textContent = rupiah.format(p.price);
+    price.children[1].textContent = "per " + p.unit;
+
+    const stock = document.createElement("div");
+    stock.className = "stock";
+    stock.innerHTML = '<div class="meter"><span></span></div><div class="label"></div>';
+    stock.querySelector(".meter span").style.width = Math.min(100, (p.stock / FULL) * 100) + "%";
+    stock.querySelector(".label").textContent =
+      p.stock === 0 ? "Habis" : p.stock <= LOW ? "Tersisa " + p.stock : "Tersedia " + p.stock;
+
+    li.append(info, price, stock);
+    return li;
+  }
+
+  function render(data) {
+    $("status").textContent = "Menampilkan " + data.count + " dari " + data.total + " produk";
+    if (data.items.length === 0) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.style.display = "block";
+      li.innerHTML = "<div>Tidak ada produk yang cocok. Coba kata kunci lain atau ubah filter.</div>";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Reset pencarian";
+      btn.onclick = reset;
+      li.append(btn);
+      $("list").replaceChildren(li);
+      return;
+    }
+    $("list").replaceChildren(...data.items.map(row));
+  }
+
+  function reset() {
+    $("q").value = "";
+    $("category").value = "";
+    document.querySelector('input[name="stock"][value="all"]').checked = true;
+    search();
+  }
+
+  async function init() {
+    try {
+      const cats = await (await fetch("/api/categories")).json();
+      for (const c of cats) $("category").append(new Option(c, c));
+    } catch (_) { /* filter kategori tetap bisa dipakai setelah server aktif */ }
+    search();
+  }
+
+  $("q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 200); });
+  $("category").addEventListener("change", search);
+  document.querySelectorAll('input[name="stock"]').forEach((r) => r.addEventListener("change", search));
+  init();
+</script>
+</body>
+</html>
